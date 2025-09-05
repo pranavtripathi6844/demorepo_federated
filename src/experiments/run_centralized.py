@@ -33,6 +33,12 @@ def parse_arguments():
                        help='Number of training epochs')
     parser.add_argument('--learning_rate', type=float, default=0.01,
                        help='Learning rate')
+    parser.add_argument('--weight_decay', type=float, default=0.0001,
+                       help='Weight decay for optimizer')
+    parser.add_argument('--momentum', type=float, default=0.9,
+                       help='Momentum for SGD optimizer')
+    parser.add_argument('--freeze_backbone', action='store_true',
+                       help='Freeze the backbone and only train the head')
     parser.add_argument('--batch_size', type=int, default=128,
                        help='Training batch size')
     parser.add_argument('--device', type=str, default='cuda',
@@ -71,6 +77,9 @@ def main():
         'model_size': args.model_size,
         'num_epochs': args.num_epochs,
         'learning_rate': args.learning_rate,
+        'weight_decay': args.weight_decay,
+        'momentum': args.momentum,
+        'freeze_backbone': args.freeze_backbone,
         'batch_size': args.batch_size,
         'device': args.device,
         'checkpoint_dir': args.checkpoint_dir,
