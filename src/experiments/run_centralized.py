@@ -15,7 +15,7 @@ import sys
 # Add src to path
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
 
-from src.models.vision_transformer import create_vision_transformer
+from src.models.vision_transformer import DINOBackboneClassifier
 from src.data.dataset_loader import CIFAR100DataManager
 from src.training.centralized_training import train_centralized_model
 
@@ -28,7 +28,7 @@ def parse_arguments():
                        help='Path to configuration file')
     parser.add_argument('--model_size', type=str, default='small',
                        choices=['tiny', 'small', 'base', 'large'],
-                       help='Vision Transformer model size')
+                       help='Vision Transformer model size (not used with DINO backbone)')
     parser.add_argument('--num_epochs', type=int, default=100,
                        help='Number of training epochs')
     parser.add_argument('--learning_rate', type=float, default=0.01,
@@ -37,8 +37,8 @@ def parse_arguments():
                        help='Weight decay for optimizer')
     parser.add_argument('--momentum', type=float, default=0.9,
                        help='Momentum for SGD optimizer')
-    parser.add_argument('--freeze_backbone', action='store_true',
-                       help='Freeze the backbone and only train the head')
+    parser.add_argument('--freeze_backbone', action='store_true', default=True,
+                       help='Freeze the backbone and only train the head (default: True)')
     parser.add_argument('--batch_size', type=int, default=128,
                        help='Training batch size')
     parser.add_argument('--device', type=str, default='cuda',
@@ -138,15 +138,19 @@ def main():
     print(f"Validation samples: {len(val_loader.dataset)}")
     print(f"Test samples: {len(test_loader.dataset)}")
     
-    # Create model
-    print(f"Creating Vision Transformer ({config['model_size']})...")
-    model = create_vision_transformer(
-        model_size=config['model_size'],
-        num_classes=100
+    # Create model - Using DINO backbone with frozen backbone (head-only training)
+    print(f"Creating DINO Backbone Classifier (frozen backbone: {config['freeze_backbone']})...")
+    model = DINOBackboneClassifier(
+        num_classes=100,
+        freeze_backbone=config['freeze_backbone']
     )
     
+    # Count trainable parameters
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     total_params = sum(p.numel() for p in model.parameters())
-    print(f"Model parameters: {total_params:,}")
+    print(f"Total model parameters: {total_params:,}")
+    print(f"Trainable parameters: {trainable_params:,}")
+    print(f"Frozen parameters: {total_params - trainable_params:,}")
     
     # Train model
     print("Starting centralized training...")
@@ -161,7 +165,7 @@ def main():
         weight_decay=config.get('weight_decay', 0.0001),
         momentum=config.get('momentum', 0.9),
         checkpoint_dir=config['checkpoint_dir'],
-        model_name=f"centralized_{config['model_size']}"
+        model_name=f"centralized_dino_{config['model_size']}"
     )
     
     print("=== Training Complete ===")
