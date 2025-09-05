@@ -1,0 +1,71 @@
+# Experiment-specific configurations
+
+# Centralized training experiments
+centralized_experiments:
+  baseline_small:
+    model_size: "small"
+    num_epochs: 100
+    learning_rate: 0.01
+    batch_size: 128
+  
+  baseline_base:
+    model_size: "base"
+    num_epochs: 100
+    learning_rate: 0.01
+    batch_size: 64
+  
+  baseline_large:
+    model_size: "large"
+    num_epochs: 100
+    learning_rate: 0.005
+    batch_size: 32
+
+# Federated learning experiments
+federated_experiments:
+  fedavg_iid:
+    model_size: "small"
+    num_rounds: 100
+    num_clients: 100
+    client_fraction: 0.1
+    non_iid_degree: 0.0
+  
+  fedavg_non_iid:
+    model_size: "small"
+    num_rounds: 100
+    num_clients: 100
+    client_fraction: 0.1
+    non_iid_degree: 0.5
+  
+  fedavg_heterogeneous:
+    model_size: "small"
+    num_rounds: 100
+    num_clients: 100
+    client_fraction: 0.1
+    non_iid_degree: 0.8
+
+# Model editing experiments
+model_editing_experiments:
+  talos_sparse_90:
+    model_size: "small"
+    target_sparsity: 0.9
+    num_iterations: 10
+    num_epochs: 40
+  
+  talos_sparse_80:
+    model_size: "small"
+    target_sparsity: 0.8
+    num_iterations: 8
+    num_epochs: 40
+  
+  talos_sparse_70:
+    model_size: "small"
+    target_sparsity: 0.7
+    num_iterations: 6
+    num_epochs: 40
+
+# Hyperparameter search configurations
+hyperparameter_search:
+  learning_rates: [0.001, 0.01, 0.1]
+  batch_sizes: [32, 64, 128]
+  sparsity_targets: [0.7, 0.8, 0.9]
+  client_fractions: [0.05, 0.1, 0.2]

@@ -1,0 +1,4 @@
+[console_scripts]
+fl-centralized = src.experiments.run_centralized:main
+fl-editing = src.experiments.run_model_editing:main
+fl-federated = src.experiments.run_federated:main

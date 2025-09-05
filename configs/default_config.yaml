@@ -1,0 +1,44 @@
+# Default configuration for federated learning experiments
+
+# Model configuration
+model:
+  size: "small"  # tiny, small, base, large
+  num_classes: 100
+
+# Training configuration
+training:
+  num_epochs: 100
+  learning_rate: 0.01
+  weight_decay: 0.0001
+  momentum: 0.9
+  batch_size: 128
+  val_split: 0.1
+
+# Federated learning configuration
+federated:
+  num_rounds: 100
+  num_clients: 100
+  client_fraction: 0.1
+  num_client_steps: 4
+  non_iid_degree: 0.0  # 0.0 = IID, 1.0 = highly non-IID
+
+# Model editing configuration
+model_editing:
+  target_sparsity: 0.9
+  num_iterations: 10
+  soft_zero_value: 0.01
+  num_classes: 100
+  samples_per_class: 1
+
+# Data configuration
+data:
+  data_dir: "./data"
+  num_workers: 4
+  download: true
+
+# System configuration
+system:
+  device: "auto"  # auto, mps, cuda, cpu - auto will choose best available
+  checkpoint_dir: "./checkpoints"
+  enable_wandb: true
+  random_seed: 42
