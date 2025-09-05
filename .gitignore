@@ -3,8 +3,6 @@ data/
 *.tar.gz
 
 # Checkpoints and results (large)
-checkpoints/
-results/
 *.pth
 
 # Virtual environment
@@ -19,7 +17,6 @@ __pycache__/
 *.so
 
 # Jupyter
-.ipynb_checkpoints/
 
 # OS files
 .DS_Store
