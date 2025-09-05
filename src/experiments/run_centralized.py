@@ -49,6 +49,9 @@ def parse_arguments():
                        help='Directory for dataset')
     parser.add_argument('--val_split', type=float, default=0.1,
                        help='Validation split ratio')
+    parser.add_argument('--scheduler', type=str, default='cosine',
+                   choices=['cosine', 'step', 'none'],
+                   help='Learning rate scheduler type')
     
     return parser.parse_args()
 
@@ -84,7 +87,8 @@ def main():
         'device': args.device,
         'checkpoint_dir': args.checkpoint_dir,
         'data_dir': args.data_dir,
-        'val_split': args.val_split
+        'val_split': args.val_split,
+        'scheduler': args.scheduler
     })
     
     print("=== Centralized Training Experiment ===")
@@ -164,6 +168,7 @@ def main():
         learning_rate=config['learning_rate'],
         weight_decay=config.get('weight_decay', 0.0001),
         momentum=config.get('momentum', 0.9),
+        scheduler_type=config.get('scheduler', 'cosine'),  # Add this line
         checkpoint_dir=config['checkpoint_dir'],
         model_name=f"centralized_dino_{config['model_size']}"
     )
