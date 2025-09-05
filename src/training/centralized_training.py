@@ -5,7 +5,7 @@ Centralized training implementation for baseline comparison.
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.optim.lr_scheduler import CosineAnnealingLR
+from torch.optim.lr_scheduler import CosineAnnealingLR, StepLR
 from torch.utils.data import DataLoader
 from typing import Dict, List, Tuple, Optional
 import numpy as np
@@ -90,6 +90,8 @@ class CentralizedTrainer:
         # Initialize scheduler
         if scheduler_type == 'cosine':
             scheduler = CosineAnnealingLR(optimizer, T_max=num_epochs)
+        elif scheduler_type == 'step':
+            scheduler = StepLR(optimizer, step_size=10, gamma=0.1)
         else:
             scheduler = None
         
@@ -304,6 +306,7 @@ def train_centralized_model(model: nn.Module,
                            learning_rate: float = 0.01,
                            weight_decay: float = 0.0001,
                            momentum: float = 0.9,
+                           scheduler_type: str = 'cosine',  # ADD THIS LINE
                            checkpoint_dir: str = "./checkpoints",
                            model_name: str = "centralized_model") -> Dict[str, List[float]]:
     """
@@ -341,6 +344,7 @@ def train_centralized_model(model: nn.Module,
         learning_rate=learning_rate,
         weight_decay=weight_decay,
         momentum=momentum,
+        scheduler_type=scheduler_type,  # ADD THIS LINE
         model_name=model_name
     )
     
