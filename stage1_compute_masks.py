@@ -10,7 +10,7 @@ import time
 from typing import Dict, List
 
 # Import project modules
-from src.models.vision_transformer import DINOBackboneClassifier
+from src.models.vision_transformer import LinearFlexibleDino  # Changed from DINOBackboneClassifier
 from src.data.dataset_loader import CIFAR100DataManager
 from src.training.model_editing import compute_mask, create_client_masks
 from src.utils.visualization import (
@@ -25,9 +25,9 @@ def compute_centralized_mask():
     """Compute centralized mask with different R and soft_zero values."""
     print("=== Computing Centralized Masks ===")
     
-    # Load model
-    print("Loading DINO Backbone Classifier...")
-    model = DINOBackboneClassifier(num_classes=100, freeze_backbone=True)
+    # Load model - Using LinearFlexibleDino
+    print("Loading LinearFlexibleDino...")
+    model = LinearFlexibleDino(num_classes=100, num_layers_to_freeze=12)  # Freeze all backbone blocks
     model.eval()
     
     # Save the model used in Stage 1
@@ -38,7 +38,8 @@ def compute_centralized_mask():
         'model_state_dict': model.state_dict(),
         'model_config': {
             'num_classes': 100,
-            'freeze_backbone': True
+            'num_layers_to_freeze': 12,
+            'model_type': 'LinearFlexibleDino'
         }
     }, model_path)
     print(f"✓ Stage 1 model saved to {model_path}")
@@ -164,9 +165,9 @@ def compute_federated_masks():
     """Compute federated masks for different Nc values."""
     print("\n=== Computing Federated Masks ===")
     
-    # Load model
-    print("Loading DINO Backbone Classifier...")
-    model = DINOBackboneClassifier(num_classes=100, freeze_backbone=True)
+    # Load model - Using LinearFlexibleDino
+    print("Loading LinearFlexibleDino...")
+    model = LinearFlexibleDino(num_classes=100, num_layers_to_freeze=12)  # Freeze all backbone blocks
     model.eval()
     
     # Save the model used in Stage 1 (if not already saved)
@@ -178,7 +179,8 @@ def compute_federated_masks():
             'model_state_dict': model.state_dict(),
             'model_config': {
                 'num_classes': 100,
-                'freeze_backbone': True
+                'num_layers_to_freeze': 12,
+                'model_type': 'LinearFlexibleDino'
             }
         }, model_path)
         print(f"✓ Stage 1 model saved to {model_path}")

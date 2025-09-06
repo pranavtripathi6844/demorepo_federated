@@ -404,3 +404,114 @@ class DINOBackboneClassifier(nn.Module):
                 # Fallback: take mean across spatial dimensions if needed
                 feats = feats.mean(dim=1) if feats.dim() > 2 else feats
         return self.head(feats)
+
+
+# === LinearFlexibleDino: Flexible DINO model with configurable freezing ===
+class LinearFlexibleDino(nn.Module):
+    """
+    Flexible DINO model that allows freezing/unfreezing backbone blocks.
+    
+    - Uses DINO ViT-S/16 backbone from torch.hub
+    - Has a simple linear head (384 -> num_classes)
+    - Supports freezing/unfreezing specific numbers of backbone blocks
+    - Compatible with mask computation and sparse training
+    """
+    
+    def __init__(self, num_classes: int = 100, num_layers_to_freeze: int = 12):
+        """
+        Initialize LinearFlexibleDino.
+        
+        Args:
+            num_classes: Number of output classes
+            num_layers_to_freeze: Number of backbone blocks to freeze (0-12)
+        """
+        super().__init__()
+        
+        # Load DINO backbone
+        with _isolate_hub_imports():
+            self.backbone = torch.hub.load('facebookresearch/dino:main', 'dino_vits16')
+        
+        # Simple linear head
+        self.head = nn.Linear(384, num_classes)
+        
+        # Freeze specified number of layers
+        self.freeze(num_layers_to_freeze)
+        
+    def freeze(self, num_layers_to_freeze: int = 12):
+        """
+        Freeze/unfreeze backbone blocks.
+        
+        Args:
+            num_layers_to_freeze: Number of backbone blocks to freeze (0-12)
+        """
+        # Get all backbone blocks
+        backbone_blocks = list(self.backbone.blocks.children())
+        total_blocks = len(backbone_blocks)
+        
+        # Ensure num_layers_to_freeze is within valid range
+        num_layers_to_freeze = max(0, min(num_layers_to_freeze, total_blocks))
+        
+        # Freeze/unfreeze blocks
+        for i, block in enumerate(backbone_blocks):
+            if i < num_layers_to_freeze:
+                # Freeze this block
+                for param in block.parameters():
+                    param.requires_grad = False
+                block.eval()
+            else:
+                # Unfreeze this block
+                for param in block.parameters():
+                    param.requires_grad = True
+                block.train()
+        
+        # Always freeze embeddings and final norm
+        for param in self.backbone.patch_embed.parameters():
+            param.requires_grad = False
+        
+        # pos_embed and cls_token are nn.Parameter objects, not modules
+        self.backbone.pos_embed.requires_grad = False
+        self.backbone.cls_token.requires_grad = False
+        
+        if hasattr(self.backbone, 'norm'):
+            for param in self.backbone.norm.parameters():
+                param.requires_grad = False
+        
+        # Head is always trainable
+        for param in self.head.parameters():
+            param.requires_grad = True
+            
+        print(f"Frozen {num_layers_to_freeze}/{total_blocks} backbone blocks")
+    
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass through the model.
+        
+        Args:
+            x: Input tensor of shape (batch_size, channels, height, width)
+            
+        Returns:
+            Output tensor of shape (batch_size, num_classes)
+        """
+        # Extract features using backbone
+        with torch.no_grad() if not any(p.requires_grad for p in self.backbone.parameters()) else torch.enable_grad():
+            feats = self.backbone(x)
+            
+            # Handle different output shapes from DINO model
+            if feats.dim() == 3:  # Shape: (batch_size, num_tokens, embed_dim)
+                feats = feats[:, 0]  # Extract CLS token features
+            elif feats.dim() == 2:  # Shape: (batch_size, embed_dim) - already extracted
+                pass  # Use as is
+            else:
+                # Fallback: take mean across spatial dimensions if needed
+                feats = feats.mean(dim=1) if feats.dim() > 2 else feats
+        
+        # Apply linear head
+        return self.head(feats)
+    
+    def get_trainable_parameters(self):
+        """Get list of trainable parameter names for mask computation."""
+        trainable_params = []
+        for name, param in self.named_parameters():
+            if param.requires_grad:
+                trainable_params.append(name)
+        return trainable_params

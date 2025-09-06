@@ -11,13 +11,13 @@ import time
 from typing import Dict, List, Any
 
 # Import project modules
-from src.models.vision_transformer import DINOBackboneClassifier
+from src.models.vision_transformer import LinearFlexibleDino  # Changed from DINOBackboneClassifier
 from src.training.sparse_optimizer import SparseSGDWithMomentum
 from src.training.centralized_training import train_centralized_model
 from src.data.dataset_loader import CIFAR100DataManager
 
 
-def load_stage1_model(model_path: str = "models/stage1_model.pth") -> DINOBackboneClassifier:
+def load_stage1_model(model_path: str = "models/stage1_model.pth") -> LinearFlexibleDino:
     """
     Load the model saved from Stage 1.
     
@@ -25,7 +25,7 @@ def load_stage1_model(model_path: str = "models/stage1_model.pth") -> DINOBackbo
         model_path: Path to the saved model from Stage 1
         
     Returns:
-        Loaded DINOBackboneClassifier model
+        Loaded LinearFlexibleDino model
     """
     print(f"Loading Stage 1 model from {model_path}...")
     
@@ -38,13 +38,14 @@ def load_stage1_model(model_path: str = "models/stage1_model.pth") -> DINOBackbo
     # Extract model configuration
     model_config = checkpoint.get('model_config', {
         'num_classes': 100,
-        'freeze_backbone': True
+        'num_layers_to_freeze': 12,
+        'model_type': 'LinearFlexibleDino'
     })
     
     # Create model with saved configuration
-    model = DINOBackboneClassifier(
+    model = LinearFlexibleDino(
         num_classes=model_config['num_classes'],
-        freeze_backbone=model_config['freeze_backbone']
+        num_layers_to_freeze=model_config.get('num_layers_to_freeze', 12)
     )
     
     # Load the state dict

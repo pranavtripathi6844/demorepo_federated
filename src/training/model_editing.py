@@ -200,7 +200,7 @@ class IterativeMaskGenerator:
             # Compute Fisher scores with current mask
             fisher_scores = self.fisher_calculator.compute_fisher_diagonal(
                 local_model, dataloader, current_mask, 
-                self.soft_zero_value, device=device
+                self.soft_zero_value
             )
             
             # Calculate target sparsity for this iteration
@@ -227,7 +227,7 @@ class IterativeMaskGenerator:
     def _configure_parameter_gradients(self, model: torch.nn.Module):
         """Configure which parameters require gradients - ONLY BACKBONE."""
         for name, param in model.named_parameters():
-            # For DINOBackboneClassifier, ONLY train backbone parameters
+            # For LinearFlexibleDino, ONLY train backbone parameters
             # Include: backbone blocks (transformer layers)
             # Exclude: head, patch_embed, pos_embed, cls_token, backbone.norm
             if 'backbone.blocks' in name:
