@@ -186,8 +186,8 @@ class IterativeMaskGenerator:
         # Configure parameter gradients for backbone-only training
         self._configure_parameter_gradients(local_model)
         
-        # Set evaluation mode
-        local_model.eval()
+        # Set training mode for gradient computation
+        local_model.train()
         
         # Initialize mask (all parameters active)
         current_mask = self._initialize_mask(local_model)
