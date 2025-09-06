@@ -1,5 +1,5 @@
 # Data files (large)
-data/
+/data/
 *.tar.gz
 
 # Checkpoints and results (large)

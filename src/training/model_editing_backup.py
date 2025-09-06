@@ -10,7 +10,6 @@ import time
 from typing import Dict, List, Optional, Tuple
 from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
-import os
 
 
 class FisherInformationCalculator:
@@ -225,17 +224,14 @@ class IterativeMaskGenerator:
         return current_mask
     
     def _configure_parameter_gradients(self, model: torch.nn.Module):
-        """Configure which parameters require gradients - ONLY BACKBONE."""
+        """Configure which parameters require gradients."""
         for name, param in model.named_parameters():
-            # For DINOBackboneClassifier, ONLY train backbone parameters
-            # Include: backbone blocks (transformer layers)
-            # Exclude: head, patch_embed, pos_embed, cls_token, backbone.norm
-            if 'backbone.blocks' in name:
-                # Only backbone transformer blocks
-                param.requires_grad = True
-            else:
-                # Exclude everything else: head, embeddings, final norm
+            # For DINOBackboneClassifier, only train backbone parameters
+            # Exclude head, embedding, cls_token, and norm layers
+            if any(excluded in name for excluded in ['head', 'embed', 'cls_token', 'norm']):
                 param.requires_grad = False
+            else:
+                param.requires_grad = True
     
     def _initialize_mask(self, model: torch.nn.Module) -> Dict[str, torch.Tensor]:
         """Initialize mask with all parameters active."""

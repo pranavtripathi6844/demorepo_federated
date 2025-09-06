@@ -10,7 +10,6 @@ import time
 from typing import Dict, List, Optional, Tuple
 from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
-import os
 
 
 class FisherInformationCalculator:
