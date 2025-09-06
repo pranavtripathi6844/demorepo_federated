@@ -327,6 +327,26 @@ class CIFAR100DataManager:
         else:
             # Fallback to original dataloader if no samples found
             return dataloader
+    
+    def get_adaptive_stratified_loader(self, dataloader: DataLoader, 
+                                     classes_per_client: int) -> DataLoader:
+        """
+        Create stratified loader based on client's class distribution.
+        
+        Args:
+            dataloader: Client's data loader
+            classes_per_client: Number of classes this client sees (Nc)
+        
+        Returns:
+            Stratified data loader with adaptive sampling:
+            - IID (Nc=100): 100 classes × 1 sample = 100 examples
+            - Non-IID (Nc<100): Nc classes × (100/Nc) samples = 100 examples
+        """
+        if classes_per_client == 100:  # IID setting
+            return self.get_stratified_loader(dataloader, num_classes=100, samples_per_class=1)
+        else:  # Non-IID setting
+            samples_per_class = 100 // classes_per_client
+            return self.get_stratified_loader(dataloader, num_classes=classes_per_client, samples_per_class=samples_per_class)
 
 
 def create_iid_splits(dataset: Dataset, num_clients: int = 100, 

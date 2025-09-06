@@ -344,8 +344,7 @@ class IterativeMaskGenerator:
 
 def create_client_masks(model: torch.nn.Module,
                        client_datasets: List[torch.utils.data.Dataset],
-                       num_classes: int = 100,
-                       samples_per_class: int = 1,
+                       classes_per_client: int = 100,
                        batch_size: int = 128,
                        target_sparsity: float = 0.9,
                        num_iterations: int = 10,
@@ -353,13 +352,12 @@ def create_client_masks(model: torch.nn.Module,
                        max_samples: int = 25,
                        debug_mode: bool = False) -> List[Dict[str, torch.Tensor]]:
     """
-    Create pruning masks for multiple clients.
+    Create pruning masks for multiple clients with adaptive stratified sampling.
     
     Args:
         model: Base model for mask generation
         client_datasets: List of client datasets
-        num_classes: Number of classes to consider
-        samples_per_class: Samples per class for stratification
+        classes_per_client: Number of classes per client (Nc) for adaptive sampling
         batch_size: Batch size for data loading
         target_sparsity: Target sparsity for masks
         num_iterations: Number of pruning iterations
@@ -387,11 +385,11 @@ def create_client_masks(model: torch.nn.Module,
             client_dataset, batch_size=batch_size, shuffle=True, num_workers=2
         )
         
-        # Create stratified loader
+        # Create adaptive stratified loader based on client's class distribution
         from src.data.dataset_loader import CIFAR100DataManager
         data_manager = CIFAR100DataManager()
-        stratified_loader = data_manager.get_stratified_loader(
-            client_loader, num_classes, samples_per_class
+        stratified_loader = data_manager.get_adaptive_stratified_loader(
+            client_loader, classes_per_client
         )
         
         # Generate mask

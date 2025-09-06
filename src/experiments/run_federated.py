@@ -168,13 +168,13 @@ def main():
     total_params = sum(p.numel() for p in model.parameters())
     print(f"Model parameters: {total_params:,}")
     
-    # Generate client masks
+    # Generate client masks with adaptive stratified sampling
     print("Generating client masks for model editing...")
+    print(f"Using adaptive stratified sampling for classes_per_client={config['classes_per_client']}")
     client_masks = create_client_masks(
         model=model,
         client_datasets=client_datasets,
-        num_classes=100,
-        samples_per_class=1,
+        classes_per_client=config['classes_per_client'],
         batch_size=config['batch_size'],
         target_sparsity=config['target_sparsity'],
         num_iterations=config['num_mask_iterations'],
