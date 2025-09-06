@@ -51,11 +51,11 @@ class FisherInformationCalculator:
             for name, param in model.named_parameters()
         }
         
+        # Move model to device first
+        model.to(self.device)
+        
         # Apply masks with soft-zeroing
         self._apply_soft_masks(model, parameter_masks, soft_zero_value)
-        
-        # Move model to device
-        model.to(self.device)
         
         # Initialize Fisher diagonal accumulator
         fisher_scores = {
@@ -240,7 +240,7 @@ class IterativeMaskGenerator:
     def _initialize_mask(self, model: torch.nn.Module) -> Dict[str, torch.Tensor]:
         """Initialize mask with all parameters active."""
         return {
-            name: torch.ones_like(param, device='cpu')
+            name: torch.ones_like(param, device=param.device)
             for name, param in model.named_parameters() 
             if param.requires_grad
         }

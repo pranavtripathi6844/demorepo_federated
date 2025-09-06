@@ -11,7 +11,7 @@ from typing import Dict, List
 
 # Import project modules
 from src.models.vision_transformer import LinearFlexibleDino  # Changed from DINOBackboneClassifier
-from src.data.dataset_loader import CIFAR100DataManager
+from src.data.dataset_loader import CIFAR100DataManager, create_non_iid_splits
 from src.training.model_editing import compute_mask, create_client_masks
 from src.utils.visualization import (
     plot_sparsity_comparison_r_values,
@@ -190,7 +190,7 @@ def compute_federated_masks():
     # Load data
     print("Loading CIFAR-100 dataset...")
     data_manager = CIFAR100DataManager()
-    train_loader, _, _ = data_manager.get_centralized_loaders()
+    train_loader, _, _ = data_manager.get_centralized_loaders(val_split=0.2)  # 40k train, 10k val, 10k test
     
     # Test different Nc values
     nc_values = [1, 5, 10, 50, 100]
@@ -210,7 +210,7 @@ def compute_federated_masks():
         
         # Create non-IID client datasets
         print(f"Creating non-IID client datasets (Nc={nc})...")
-        client_datasets = data_manager.create_non_iid_splits(
+        client_datasets = create_non_iid_splits(
             train_loader.dataset, 
             num_clients=100, 
             classes_per_client=nc
@@ -231,7 +231,7 @@ def compute_federated_masks():
                     num_iterations=R,
                     soft_zero_value=sz,
                     max_samples=25,
-                    debug=False
+                    debug_mode=False  # Changed from debug=False
                 )
                 
                 end_time = time.time()

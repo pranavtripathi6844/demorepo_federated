@@ -68,18 +68,6 @@ def train_centralized_with_mask(mask_file: str,
                                model_path: str = 'models/stage1_model.pth') -> Dict[str, Any]:
     """
     Train centralized model with pre-computed mask using SparseSGDM.
-    
-    Args:
-        mask_file: Path to the pre-computed mask file
-        learning_rate: Learning rate for training
-        weight_decay: Weight decay for regularization
-        momentum: Momentum factor for SparseSGDM
-        num_epochs: Number of training epochs
-        device: Device to use for training
-        scheduler_type: Type of learning rate scheduler
-        
-    Returns:
-        Training history dictionary
     """
     print(f"=== Training Centralized with Mask: {mask_file} ===")
     
@@ -93,22 +81,65 @@ def train_centralized_with_mask(mask_file: str,
     
     mask = torch.load(mask_file)
     
-    # Calculate mask statistics
-    total_params = sum(m.numel() for m in mask.values())
-    pruned_params = sum((m == 0).sum().item() for m in mask.values())
-    sparsity = pruned_params / total_params
+    # CRITICAL FIX: Ensure head parameters are trainable
+    print("Configuring parameter gradients...")
+    for name, param in model.named_parameters():
+        if 'head' in name:
+            # Head should be fully trainable
+            param.requires_grad = True
+            print(f"  Head parameter {name}: requires_grad=True")
+        elif 'backbone.blocks' in name:
+            # Backbone blocks should be trainable (for mask application)
+            param.requires_grad = True
+            print(f"  Backbone parameter {name}: requires_grad=True")
+        else:
+            # Other parameters (embeddings, etc.) should be frozen
+            param.requires_grad = False
+            print(f"  Other parameter {name}: requires_grad=False")
     
-    print(f"Mask statistics:")
+    # Create a combined mask: backbone uses the computed mask, head uses all-ones mask
+    print("Creating combined mask for SparseSGDM...")
+    combined_mask = {}
+    
+    for name, param in model.named_parameters():
+        if param.requires_grad:
+            if 'head' in name:
+                # Head gets all-ones mask (no pruning) - ensure same device as param
+                combined_mask[name] = torch.ones_like(param, device=param.device)
+                print(f"  Head parameter {name}: all-ones mask ({param.numel()} params)")
+            elif 'backbone.blocks' in name and name in mask:
+                # Backbone gets the computed mask - move to same device as param
+                combined_mask[name] = mask[name].to(param.device)
+                active_params = (mask[name] == 1).sum().item()
+                total_params = mask[name].numel()
+                print(f"  Backbone parameter {name}: pruned mask ({active_params}/{total_params} active)")
+            else:
+                # Other trainable parameters get all-ones mask - ensure same device as param
+                combined_mask[name] = torch.ones_like(param, device=param.device)
+                print(f"  Other parameter {name}: all-ones mask ({param.numel()} params)")
+    
+    # CRITICAL FIX: Move all masks to CUDA before creating optimizer
+    print("Moving all masks to CUDA...")
+    for name in combined_mask:
+        combined_mask[name] = combined_mask[name].to('cuda')
+        print(f"  Moved {name} mask to CUDA")
+    
+    # Calculate mask statistics
+    total_params = sum(m.numel() for m in combined_mask.values())
+    pruned_params = sum((m == 0).sum().item() for m in combined_mask.values())
+    sparsity = pruned_params / total_params if total_params > 0 else 0
+    
+    print(f"Combined mask statistics:")
     print(f"  - Total parameters: {total_params:,}")
     print(f"  - Pruned parameters: {pruned_params:,}")
-    print(f"  - Sparsity: {sparsity:.4f} ({sparsity*100:.1f}%)")
+    print(f"  - Overall sparsity: {sparsity:.4f} ({sparsity*100:.1f}%)")
     print(f"  - Active parameters: {total_params - pruned_params:,}")
     
-    # Create SparseSGDM optimizer
+    # Create SparseSGDM optimizer with combined mask
     print("Creating SparseSGDM optimizer...")
     optimizer = SparseSGDWithMomentum(
         parameters=model.named_parameters(),
-        parameter_masks=mask,
+        parameter_masks=combined_mask,
         learning_rate=learning_rate,
         momentum_factor=momentum,
         weight_decay_factor=weight_decay
@@ -120,27 +151,142 @@ def train_centralized_with_mask(mask_file: str,
     print(f"  - Momentum: {momentum}")
     print(f"  - Scheduler: {scheduler_type}")
     
-    # Train model
+    # Load data
+    print("Loading CIFAR-100 dataset...")
+    data_manager = CIFAR100DataManager()
+    train_loader, val_loader, test_loader = data_manager.get_centralized_loaders(val_split=0.2)
+    
+    # Move model to device
+    model = model.to(device)
+    
+    # Create scheduler
+    if scheduler_type == 'cosine':
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs)
+    elif scheduler_type == 'step':
+        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
+    else:
+        scheduler = None
+    
+    # Loss function
+    criterion = torch.nn.CrossEntropyLoss()
+    
+    # Training history
+    train_losses = []
+    train_accuracies = []
+    val_losses = []
+    val_accuracies = []
+    learning_rates = []
+    
     print(f"\nStarting training for {num_epochs} epochs...")
     start_time = time.time()
     
-    training_history = train_centralized_model(
-        model=model,
-        optimizer=optimizer,
-        num_epochs=num_epochs,
-        device=device,
-        scheduler_type=scheduler_type,
-        checkpoint_dir="./checkpoints",
-        model_name=f"centralized_masked_{os.path.basename(mask_file).replace('.pth', '')}"
-    )
+    for epoch in range(num_epochs):
+        # Training phase
+        model.train()
+        train_loss = 0.0
+        train_correct = 0
+        train_total = 0
+        
+        for batch_idx, (data, target) in enumerate(train_loader):
+            data, target = data.to(device), target.to(device)
+            
+            optimizer.zero_grad()
+            output = model(data)
+            loss = criterion(output, target)
+            loss.backward()
+            optimizer.step()
+            
+            train_loss += loss.item()
+            _, predicted = output.max(1)
+            train_total += target.size(0)
+            train_correct += predicted.eq(target).sum().item()
+        
+        # Validation phase
+        model.eval()
+        val_loss = 0.0
+        val_correct = 0
+        val_total = 0
+        
+        with torch.no_grad():
+            for data, target in val_loader:
+                data, target = data.to(device), target.to(device)
+                output = model(data)
+                loss = criterion(output, target)
+                
+                val_loss += loss.item()
+                _, predicted = output.max(1)
+                val_total += target.size(0)
+                val_correct += predicted.eq(target).sum().item()
+        
+        # Calculate metrics
+        train_loss /= len(train_loader)
+        train_acc = 100. * train_correct / train_total
+        val_loss /= len(val_loader)
+        val_acc = 100. * val_correct / val_total
+        
+        # Store history
+        train_losses.append(train_loss)
+        train_accuracies.append(train_acc)
+        val_losses.append(val_loss)
+        val_accuracies.append(val_acc)
+        learning_rates.append(optimizer.param_groups[0]['lr'])
+        
+        # Update scheduler
+        if scheduler:
+            scheduler.step()
+        
+        # Print progress
+        if (epoch + 1) % 5 == 0 or epoch == 0:
+            print(f"Epoch {epoch+1:3d}/{num_epochs}: "
+                  f"Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.2f}%, "
+                  f"Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.2f}%, "
+                  f"LR: {learning_rates[-1]:.6f}")
     
     end_time = time.time()
     training_time = end_time - start_time
     
+    # Create training history
+    training_history = {
+        'train_loss': train_losses,
+        'train_accuracy': train_accuracies,
+        'val_loss': val_losses,
+        'val_accuracy': val_accuracies,
+        'learning_rates': learning_rates,
+        'epochs': list(range(1, num_epochs + 1)),
+        'config': {
+            'learning_rate': learning_rate,
+            'weight_decay': weight_decay,
+            'momentum': momentum,
+            'scheduler': scheduler_type,
+            'sparsity': sparsity
+        }
+    }
+    
+    # Save training history
+    model_name = f"centralized_masked_{os.path.basename(mask_file).replace('.pth', '')}"
+    history_file = f"checkpoints/{model_name}_epoch_{num_epochs}.json"
+    os.makedirs("checkpoints", exist_ok=True)
+    
+    import json
+    with open(history_file, 'w') as f:
+        json.dump(training_history, f, indent=2)
+    
+    # Save model
+    model_file = f"checkpoints/{model_name}_epoch_{num_epochs}.pth"
+    torch.save({
+        'model_state_dict': model.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict(),
+        'training_history': training_history,
+        'config': training_history['config']
+    }, model_file)
+    
     print(f"\n✅ Centralized training completed!")
     print(f"Training time: {training_time:.2f}s")
-    print(f"Final training accuracy: {training_history['train_accuracy'][-1]:.2f}%")
-    print(f"Final validation accuracy: {training_history['val_accuracy'][-1]:.2f}%")
+    print(f"Final training accuracy: {train_accuracies[-1]:.2f}%")
+    print(f"Final validation accuracy: {val_accuracies[-1]:.2f}%")
+    print(f"Best validation accuracy: {max(val_accuracies):.2f}%")
+    print(f"Training history saved: {history_file}")
+    print(f"Model saved: {model_file}")
     
     return training_history
 
