@@ -4,7 +4,7 @@ Checkpoint manager for saving and loading model checkpoints.
 
 import torch
 import os
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple, List
 
 
 class CheckpointManager:
@@ -34,6 +34,21 @@ class CheckpointManager:
         if is_best:
             best_path = os.path.join(self.checkpoint_dir, 'best_model.pth')
             torch.save(checkpoint, best_path)
+    
+    def save_federated_checkpoint(self, model, round_num: int, 
+                                 client_metrics: List[Dict[str, Any]], 
+                                 filename: str) -> None:
+        """Save federated learning checkpoint."""
+        checkpoint = {
+            'round': round_num,
+            'model_state_dict': model.state_dict(),
+            'client_metrics': client_metrics
+        }
+        
+        # Save checkpoint
+        filepath = os.path.join(self.checkpoint_dir, filename)
+        torch.save(checkpoint, filepath)
+        print(f"Saved federated checkpoint: {filepath}")
     
     def load_checkpoint(self, model, checkpoint_path: Optional[str] = None) -> Tuple[int, Dict[str, Any]]:
         """Load model checkpoint."""

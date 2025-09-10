@@ -2,9 +2,6 @@
 /data/
 *.tar.gz
 
-# Checkpoints and results (large)
-*.pth
-
 # Virtual environment
 fl_env/
 
@@ -17,6 +14,7 @@ __pycache__/
 *.so
 
 # Jupyter
+.ipynb_checkpoints/
 
 # OS files
 .DS_Store
@@ -32,3 +30,15 @@ Thumbs.db
 # Temporary files
 *.tmp
 *.temp
+
+# Wandb runs (keep offline runs but ignore online syncing)
+wandb/run-*/
+wandb/latest-run
+
+# Large data files to exclude
+data/cifar-100-python.tar.gz
+
+# ALLOW ESSENTIAL FILES FOR FEDERATED + TALOS:
+# - All .pth files in checkpoints/, masks/, and models/ are now tracked
+# - All configuration and result files are tracked
+# - Removed *.pth exclusion to allow essential model files

@@ -44,11 +44,12 @@ class FederatedTrainer:
             num_client_steps: Number of local training steps per client
             batch_size: Batch size for training
         """
-        self.global_model = model
+        # Ensure device is set first, then move model to that device
+        self.device = device
+        self.global_model = model.to(self.device)
         self.client_datasets = client_datasets
         self.client_masks = client_masks
         self.optimizer_config = optimizer_config
-        self.device = device
         self.num_clients = num_clients
         self.client_fraction = client_fraction
         self.num_client_steps = num_client_steps
@@ -130,10 +131,10 @@ class FederatedTrainer:
             training_history['selected_clients'].append(selected_clients)
             
             # Train selected clients
-            client_models, client_metrics = self._train_selected_clients(selected_clients)
+            client_models, client_metrics, client_sizes = self._train_selected_clients(selected_clients)
             
-            # Aggregate client updates
-            self._aggregate_client_updates(client_models)
+            # Aggregate client updates (weighted FedAvg by client size)
+            self._aggregate_client_updates(client_models, client_sizes)
             
             # Evaluate global model
             val_loss, val_accuracy = self._evaluate_global_model(validation_loader)
@@ -181,10 +182,11 @@ class FederatedTrainer:
         num_selected = max(int(self.num_clients * self.client_fraction), 1)
         return np.random.choice(range(self.num_clients), num_selected, replace=False)
     
-    def _train_selected_clients(self, selected_clients: List[int]) -> Tuple[List[Dict], List[Dict]]:
-        """Train the selected clients and return their models and metrics."""
+    def _train_selected_clients(self, selected_clients: List[int]) -> Tuple[List[Dict], List[Dict], List[int]]:
+        """Train the selected clients and return their models, metrics, and client sizes."""
         client_models = []
         client_metrics = []
+        client_sizes = []
         
         for client_idx in selected_clients:
             # Create data loader for this client
@@ -205,8 +207,9 @@ class FederatedTrainer:
                 'loss': client_loss,
                 'accuracy': client_accuracy
             })
+            client_sizes.append(len(self.client_datasets[client_idx]))
         
-        return client_models, client_metrics
+        return client_models, client_metrics, client_sizes
     
     def _train_single_client(self, client_idx: int, 
                             client_loader: DataLoader) -> Tuple[Dict, float, float]:
@@ -269,31 +272,32 @@ class FederatedTrainer:
         
         return local_model.state_dict(), final_loss, final_accuracy
     
-    def _aggregate_client_updates(self, client_models: List[Dict]):
-        """Aggregate client model updates using FedAvg."""
-        # Get the number of clients that participated
+    def _aggregate_client_updates(self, client_models: List[Dict], client_sizes: List[int]):
+        """Aggregate client model updates using weighted FedAvg (by client dataset size)."""
         num_clients = len(client_models)
+        if num_clients == 0:
+            return
         
-        # Initialize aggregated state dict
+        # Normalize weights
+        weights = torch.tensor(client_sizes, dtype=torch.float32)
+        weights = weights / weights.sum()
+        
         aggregated_state = {}
+        model_keys = client_models[0].keys()
         
-        # Get the keys from the first client model
-        if num_clients > 0:
-            model_keys = client_models[0].keys()
-            
-            # Aggregate each parameter
-            for key in model_keys:
-                # Stack all client parameters for this key
-                stacked_params = torch.stack([client_models[i][key] for i in range(num_clients)])
-                
-                # Take the mean (FedAvg)
-                aggregated_state[key] = torch.mean(stacked_params, dim=0)
-            
-            # Update global model
-            self.global_model.load_state_dict(aggregated_state)
+        for key in model_keys:
+            stacked = torch.stack([client_models[i][key] for i in range(num_clients)])
+            # Broadcast weights over param dims
+            view = (num_clients,) + tuple([1] * (stacked.dim() - 1))
+            weighted = (stacked * weights.view(view)).sum(dim=0)
+            aggregated_state[key] = weighted
+        
+        self.global_model.load_state_dict(aggregated_state)
     
     def _evaluate_global_model(self, validation_loader: DataLoader) -> Tuple[float, float]:
         """Evaluate the global model on validation data."""
+        # Make sure the global model is on the correct device before evaluation
+        self.global_model.to(self.device)
         self.global_model.eval()
         criterion = nn.CrossEntropyLoss()
         
@@ -398,3 +402,193 @@ def train_federated_model_editing(model: nn.Module,
     )
     
     return training_history
+
+
+def train_federated_model_editing_talos(model: nn.Module,
+                                       client_datasets: List[torch.utils.data.Dataset],
+                                       client_masks: List[Dict[str, torch.Tensor]],
+                                       optimizer_config: Dict[str, Any],
+                                       device: str = 'cuda',
+                                       num_rounds: int = 300,
+                                       num_clients: int = 100,
+                                       client_fraction: float = 0.1,
+                                       num_client_steps: int = 4,
+                                       batch_size: int = 64,
+                                       validation_loader: Optional[DataLoader] = None,
+                                       checkpoint_path: str = "./checkpoints",
+                                       model_name: str = "federated_talos_model",
+                                       checkpoint_interval: int = 50,
+                                       resume_from: Optional[str] = None) -> Dict[str, List[float]]:
+    """
+    Train a federated model with TaLoS constraints and model editing capabilities.
+    
+    Args:
+        model: Global model to train
+        client_datasets: List of client datasets
+        client_masks: List of client masks
+        optimizer_config: Optimizer configuration (including soft_zero_value)
+        device: Device to train on
+        num_rounds: Number of federated rounds (300 as per requirements)
+        num_clients: Total number of clients
+        client_fraction: Fraction of clients per round
+        num_client_steps: Local training steps per client
+        batch_size: Training batch size
+        validation_loader: Validation data loader
+        checkpoint_path: Path for checkpoints
+        model_name: Name for the model
+        checkpoint_interval: Interval for saving checkpoints
+        resume_from: Path to resume from checkpoint
+        
+    Returns:
+        Training history dictionary
+    """
+    # Create federated trainer with TaLoS constraints
+    trainer = FederatedTrainerTaLoS(
+        model=model,
+        client_datasets=client_datasets,
+        client_masks=client_masks,
+        optimizer_config=optimizer_config,
+        device=device,
+        num_clients=num_clients,
+        client_fraction=client_fraction,
+        num_client_steps=num_client_steps,
+        batch_size=batch_size
+    )
+    
+    # Train the model
+    training_history = trainer.train_federated_rounds(
+        num_rounds=num_rounds,
+        validation_loader=validation_loader,
+        checkpoint_path=checkpoint_path,
+        log_interval=checkpoint_interval,
+        model_name=model_name,
+        resume_from=resume_from
+    )
+    
+    return training_history
+
+
+class FederatedTrainerTaLoS(FederatedTrainer):
+    """
+    Handles federated learning training with TaLoS constraints and model editing capabilities.
+    """
+    
+    def __init__(self, model: nn.Module, 
+                 client_datasets: List[torch.utils.data.Dataset],
+                 client_masks: List[Dict[str, torch.Tensor]],
+                 optimizer_config: Dict[str, Any],
+                 device: str = 'cuda',
+                 num_clients: int = 100,
+                 client_fraction: float = 0.1,
+                 num_client_steps: int = 4,
+                 batch_size: int = 64):
+        """
+        Initialize the TaLoS federated trainer.
+        """
+        super().__init__(model, client_datasets, client_masks, optimizer_config, 
+                        device, num_clients, client_fraction, num_client_steps, batch_size)
+        
+        self.soft_zero_value = optimizer_config.get('soft_zero_value', 0.01)
+        print(f"TaLoS Federated Trainer initialized with soft_zero_value: {self.soft_zero_value}")
+    
+    def _apply_soft_zero_masking(self, model: nn.Module, 
+                                mask: Dict[str, torch.Tensor]) -> None:
+        """
+        Apply soft-zero masking to model parameters for TaLoS constraints.
+        """
+        with torch.no_grad():
+            for name, param in model.named_parameters():
+                if name in mask and 'backbone.blocks' in name:
+                    # Move mask to same device as parameter
+                    mask_tensor = mask[name].to(param.device)
+                    
+                    # Create soft-zero mask: 0 -> soft_zero_value, 1 -> 1.0
+                    soft_mask = mask_tensor.clone()
+                    soft_mask[soft_mask == 0] = self.soft_zero_value
+                    
+                    # Apply soft masking
+                    param.data.mul_(soft_mask)
+    
+    def _train_single_client(self, client_idx: int, 
+                            client_loader: DataLoader) -> Tuple[Dict, float, float]:
+        """Train a single client with TaLoS constraints and return the updated model and metrics."""
+        # Create local model copy
+        local_model = copy.deepcopy(self.global_model).to(self.device)
+        
+        # Get client mask
+        client_mask = self.client_masks[client_idx]
+        
+        # Create sparse optimizer
+        local_optimizer = SparseSGDWithMomentum(
+            local_model.named_parameters(),
+            client_mask,
+            learning_rate=self.optimizer_config['lr'],
+            momentum_factor=self.optimizer_config.get('momentum', 0.9),
+            weight_decay_factor=self.optimizer_config.get('weight_decay', 0.0001)
+        )
+        
+        # Loss function
+        criterion = nn.CrossEntropyLoss()
+        
+        # Training loop (no per-step soft-zero re-application; grad masking only)
+        local_model.train()
+        accumulated_loss = 0.0
+        accumulated_correct = 0
+        accumulated_total = 0
+        
+        # Create data iterator for multiple steps
+        data_iterator = iter(client_loader)
+        
+        for step in range(self.num_client_steps):
+            try:
+                images, labels = next(data_iterator)
+            except StopIteration:
+                # Restart iterator if we run out of data
+                data_iterator = iter(client_loader)
+                images, labels = next(data_iterator)
+            
+            images, labels = images.to(self.device), labels.to(self.device)
+            
+            # Forward pass
+            outputs = local_model(images)
+            loss = criterion(outputs, labels)
+            
+            # Backward pass
+            local_optimizer.zero_grad()
+            loss.backward()
+            local_optimizer.step()
+            
+            # Accumulate metrics
+            accumulated_loss += loss.item() * images.size(0)
+            _, predicted = torch.max(outputs, 1)
+            accumulated_total += labels.size(0)
+            accumulated_correct += (predicted == labels).sum().item()
+        
+        # Calculate final metrics
+        final_loss = accumulated_loss / accumulated_total if accumulated_total > 0 else 0.0
+        final_accuracy = 100 * accumulated_correct / accumulated_total if accumulated_total > 0 else 0.0
+        
+        return local_model.state_dict(), final_loss, final_accuracy
+    
+    def _aggregate_client_updates(self, client_models: List[Dict], client_sizes: List[int]):
+        """Aggregate client model updates using weighted FedAvg (by client dataset size)."""
+        num_clients = len(client_models)
+        if num_clients == 0:
+            return
+        
+        weights = torch.tensor(client_sizes, dtype=torch.float32)
+        weights = weights / weights.sum()
+        
+        aggregated_state = {}
+        model_keys = client_models[0].keys()
+        for key in model_keys:
+            stacked = torch.stack([client_models[i][key] for i in range(num_clients)])
+            view = (num_clients,) + tuple([1] * (stacked.dim() - 1))
+            weighted = (stacked * weights.view(view)).sum(dim=0)
+            aggregated_state[key] = weighted
+        
+        self.global_model.load_state_dict(aggregated_state)
+    
+    def _apply_global_masking(self):
+        """No-op: global model remains unmasked after FedAvg (masking only local via optimizer)."""
+        return

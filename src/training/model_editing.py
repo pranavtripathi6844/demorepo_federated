@@ -178,8 +178,11 @@ class IterativeMaskGenerator:
             debug_mode: Enable debug output
             
         Returns:
-            Binary mask dictionary for each parameter
+            Dictionary of binary masks for each parameter
         """
+        # Update the fisher calculator with the correct device
+        self.fisher_calculator = FisherInformationCalculator(device=device)
+        
         # Create local copy of model
         local_model = copy.deepcopy(model)
         
