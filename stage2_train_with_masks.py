@@ -17,17 +17,59 @@ from src.training.centralized_training import train_centralized_model
 from src.data.dataset_loader import CIFAR100DataManager, create_non_iid_splits
 
 
-def load_stage1_model(model_path: str = "models/stage1_model.pth") -> LinearFlexibleDino:
+def load_stage1_model(model_path: str = "models/stage1_model.pth", use_federated_baseline: bool = False) -> LinearFlexibleDino:
     """
     Load the model saved from Stage 1 or use a pre-trained federated baseline.
     This ensures we start with a model that has a trained federated head.
     
     Args:
         model_path: Path to the saved model from Stage 1
+        use_federated_baseline: If True, prioritize baseline federated checkpoints over Stage 1 model
         
     Returns:
         Loaded LinearFlexibleDino model with trained federated head
     """
+    
+    # If use_federated_baseline is True, try baseline federated checkpoints first
+    if use_federated_baseline:
+        print("🔄 Prioritizing baseline federated checkpoint for TaLoS training...")
+        
+        # Look for the best baseline federated checkpoint
+        baseline_checkpoints = [
+            "checkpoints/baseline_fedavg_round_600.pth",
+            "checkpoints/baseline_fedavg_round_550.pth", 
+            "checkpoints/baseline_fedavg_round_500.pth",
+            "checkpoints/baseline_fedavg_round_450.pth",
+            "checkpoints/baseline_fedavg_round_400.pth"
+        ]
+        
+        for checkpoint_path in baseline_checkpoints:
+            if os.path.exists(checkpoint_path):
+                print(f"Loading baseline federated checkpoint: {checkpoint_path}")
+                
+                try:
+                    checkpoint = torch.load(checkpoint_path, map_location='cpu')
+                    
+                    # Create model (assuming standard configuration)
+                    model = LinearFlexibleDino(num_classes=100, num_layers_to_freeze=12)
+                    
+                    # Load the trained federated weights
+                    model.load_state_dict(checkpoint['model_state_dict'])
+                    model.eval()
+                    
+                    print(f"✅ Baseline federated model loaded successfully")
+                    print(f"  - Using checkpoint: {checkpoint_path}")
+                    print(f"  - This model has a TRAINED FEDERATED HEAD!")
+                    
+                    return model
+                    
+                except Exception as e:
+                    print(f"Failed to load {checkpoint_path}: {e}")
+                    continue
+        
+        print("⚠️  No baseline federated checkpoint found, falling back to Stage 1 model...")
+    
+    # Original logic: Try to load Stage 1 model
     print(f"Loading Stage 1 model from {model_path}...")
     
     # Try to load Stage 1 model first
@@ -53,6 +95,7 @@ def load_stage1_model(model_path: str = "models/stage1_model.pth") -> LinearFlex
         
         print(f"✓ Stage 1 model loaded successfully")
         print(f"  - Model configuration: {model_config}")
+        print(f"  - This model has an UNTRAINED HEAD")
         
         return model
     
@@ -138,27 +181,6 @@ def configure_talos_training(model: LinearFlexibleDino, device: str = 'cuda') ->
     print("✓ TaLoS configuration complete - Head is now TRAINABLE")
 
 
-def apply_soft_zero_masking(model: LinearFlexibleDino, 
-                           mask: Dict[str, torch.Tensor], 
-                           soft_zero_value: float = 0.01,
-                           device: str = 'cuda') -> None:
-    """
-    Apply soft-zero masking to model parameters.
-    This enforces the TaLoS constraint by setting masked weights to soft_zero_value.
-    """
-    with torch.no_grad():
-        for name, param in model.named_parameters():
-            if name in mask and 'backbone.blocks' in name:
-                # Move mask to same device as parameter
-                mask_tensor = mask[name].to(param.device)
-                
-                # Create soft-zero mask: 0 -> soft_zero_value, 1 -> 1.0
-                soft_mask = mask_tensor.clone()
-                soft_mask[soft_mask == 0] = soft_zero_value
-                
-                # Apply soft masking
-                param.data.mul_(soft_mask)
-                print(f"  Applied soft-zero masking to {name}: {soft_zero_value} for pruned weights")
 
 
 def train_centralized_with_mask(mask_file: str, 
@@ -188,9 +210,6 @@ def train_centralized_with_mask(mask_file: str,
     
     mask = torch.load(mask_file)
     
-    # Apply soft-zero masking to enforce TaLoS constraints
-    print("Applying soft-zero masking...")
-    apply_soft_zero_masking(model, mask, soft_zero_value, device)
     
     # Create a combined mask: backbone uses the computed mask, head uses all-ones mask
     print("Creating combined mask for SparseSGDM...")
@@ -421,8 +440,8 @@ def train_federated_with_masks(mask_file: str,
     """
     print(f"=== Training Federated with TaLoS Masks: {mask_file} ===")
     
-    # Load model from Stage 1
-    model = load_stage1_model(model_path)
+    # Load model from Stage 1 (use federated baseline for TaLoS)
+    model = load_stage1_model(model_path, use_federated_baseline=True)
     
     # Configure for TaLoS training
     configure_talos_training(model, device)

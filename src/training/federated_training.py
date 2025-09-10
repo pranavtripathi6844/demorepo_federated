@@ -279,7 +279,7 @@ class FederatedTrainer:
             return
         
         # Normalize weights
-        weights = torch.tensor(client_sizes, dtype=torch.float32)
+        weights = torch.tensor(client_sizes, dtype=torch.float32).to(self.device)
         weights = weights / weights.sum()
         
         aggregated_state = {}
@@ -491,23 +491,6 @@ class FederatedTrainerTaLoS(FederatedTrainer):
         self.soft_zero_value = optimizer_config.get('soft_zero_value', 0.01)
         print(f"TaLoS Federated Trainer initialized with soft_zero_value: {self.soft_zero_value}")
     
-    def _apply_soft_zero_masking(self, model: nn.Module, 
-                                mask: Dict[str, torch.Tensor]) -> None:
-        """
-        Apply soft-zero masking to model parameters for TaLoS constraints.
-        """
-        with torch.no_grad():
-            for name, param in model.named_parameters():
-                if name in mask and 'backbone.blocks' in name:
-                    # Move mask to same device as parameter
-                    mask_tensor = mask[name].to(param.device)
-                    
-                    # Create soft-zero mask: 0 -> soft_zero_value, 1 -> 1.0
-                    soft_mask = mask_tensor.clone()
-                    soft_mask[soft_mask == 0] = self.soft_zero_value
-                    
-                    # Apply soft masking
-                    param.data.mul_(soft_mask)
     
     def _train_single_client(self, client_idx: int, 
                             client_loader: DataLoader) -> Tuple[Dict, float, float]:
@@ -576,7 +559,7 @@ class FederatedTrainerTaLoS(FederatedTrainer):
         if num_clients == 0:
             return
         
-        weights = torch.tensor(client_sizes, dtype=torch.float32)
+        weights = torch.tensor(client_sizes, dtype=torch.float32).to(self.device)
         weights = weights / weights.sum()
         
         aggregated_state = {}

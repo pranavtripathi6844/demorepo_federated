@@ -148,7 +148,8 @@ class IterativeMaskGenerator:
     
     def __init__(self, target_sparsity: float = 0.9, 
                  num_iterations: int = 5,
-                 soft_zero_value: float = 0.01):
+                 soft_zero_value: float = 0.01,
+                 selection_strategy: str = 'least_sensitive'):
         """
         Initialize the mask generator.
         
@@ -156,11 +157,21 @@ class IterativeMaskGenerator:
             target_sparsity: Target fraction of parameters to prune
             num_iterations: Number of iterative pruning rounds
             soft_zero_value: Soft zero value for Fisher computation
+            selection_strategy: Parameter selection strategy
+                - 'least_sensitive': Current approach (lowest Fisher scores)
+                - 'most_sensitive': Highest Fisher scores
+                - 'lowest_magnitude': Smallest parameter magnitudes
+                - 'highest_magnitude': Largest parameter magnitudes
+                - 'random': Random parameter selection
         """
         self.target_sparsity = target_sparsity
         self.num_iterations = num_iterations
         self.soft_zero_value = soft_zero_value
+        self.selection_strategy = selection_strategy
         self.fisher_calculator = FisherInformationCalculator()
+        
+        # Store model reference for magnitude-based strategies
+        self._current_model = None
     
     def generate_mask(self, model: torch.nn.Module, 
                      dataloader: DataLoader,
@@ -182,6 +193,9 @@ class IterativeMaskGenerator:
         """
         # Update the fisher calculator with the correct device
         self.fisher_calculator = FisherInformationCalculator(device=device)
+        
+        # Store model reference for magnitude-based strategies
+        self._current_model = model
         
         # Create local copy of model
         local_model = copy.deepcopy(model)
@@ -257,12 +271,29 @@ class IterativeMaskGenerator:
                                  current_mask: Dict[str, torch.Tensor],
                                  debug_mode: bool) -> Dict[str, torch.Tensor]:
         """Update mask based on Fisher scores and target sparsity."""
+        if self.selection_strategy == 'least_sensitive':
+            # Use original implementation for backwards compatibility
+            return self._update_mask_least_sensitive(
+                fisher_scores, target_sparsity, current_mask, debug_mode
+            )
+        else:
+            # Use flexible implementation for new strategies
+            return self._update_mask_flexible(
+                fisher_scores, target_sparsity, current_mask, debug_mode
+            )
+    
+    def _update_mask_least_sensitive(self, fisher_scores: Dict[str, torch.Tensor],
+                                   target_sparsity: float,
+                                   current_mask: Dict[str, torch.Tensor],
+                                   debug_mode: bool) -> Dict[str, torch.Tensor]:
+        """Original implementation for least-sensitive parameter selection."""
         # Collect active scores
         active_scores, total_params, pruned_params = self._collect_active_scores(
             fisher_scores, current_mask
         )
         
         if debug_mode:
+            print(f"Strategy: {self.selection_strategy}")
             print(f"Target: {target_sparsity:.4f} ({int(total_params * target_sparsity)} params)")
             print(f"Total params: {total_params}, Already pruned: {pruned_params}")
         
@@ -277,9 +308,36 @@ class IterativeMaskGenerator:
             score_tensor = fisher_scores[param_name]
             mask_tensor = updated_mask[param_name]
             
-            # Prune parameters below threshold
+            # Prune parameters below threshold (least sensitive)
             pruning_indices = score_tensor < threshold
             mask_tensor[pruning_indices] = 0
+        
+        return updated_mask
+    
+    def _update_mask_flexible(self, fisher_scores: Dict[str, torch.Tensor],
+                            target_sparsity: float,
+                            current_mask: Dict[str, torch.Tensor],
+                            debug_mode: bool) -> Dict[str, torch.Tensor]:
+        """Flexible implementation for different parameter selection strategies."""
+        # Compute selection scores based on strategy
+        selection_scores, total_params, pruned_params = self._compute_selection_scores(
+            fisher_scores, current_mask
+        )
+        
+        if debug_mode:
+            print(f"Strategy: {self.selection_strategy}")
+            print(f"Target: {target_sparsity:.4f} ({int(total_params * target_sparsity)} params)")
+            print(f"Total params: {total_params}, Already pruned: {pruned_params}")
+        
+        # Calculate threshold based on strategy
+        threshold = self._calculate_flexible_threshold(
+            selection_scores, target_sparsity, total_params, pruned_params
+        )
+        
+        # Apply pruning based on strategy
+        updated_mask = self._apply_strategy_pruning(
+            fisher_scores, current_mask, threshold
+        )
         
         return updated_mask
     
@@ -322,6 +380,127 @@ class IterativeMaskGenerator:
             threshold_idx = len(sorted_scores) - 1
         
         return sorted_scores[threshold_idx].item()
+    
+    def _compute_selection_scores(self, fisher_scores: Dict[str, torch.Tensor],
+                                current_mask: Dict[str, torch.Tensor]) -> Tuple[torch.Tensor, int, int]:
+        """Compute scores for parameter selection based on strategy."""
+        
+        if self.selection_strategy in ['least_sensitive', 'most_sensitive']:
+            # Use Fisher scores
+            return self._collect_active_scores(fisher_scores, current_mask)
+        
+        elif self.selection_strategy in ['lowest_magnitude', 'highest_magnitude']:
+            # Use parameter magnitudes
+            active_magnitudes = []
+            total_params = 0
+            pruned_params = 0
+            
+            for param_name in fisher_scores:  # Iterate through same parameters
+                # Get parameter magnitudes from model
+                param_magnitudes = torch.abs(self._get_parameter_values(param_name)).view(-1)
+                mask = current_mask[param_name].view(-1)
+                
+                # Only consider active parameters
+                active_magnitudes.append(param_magnitudes[mask == 1])
+                
+                total_params += len(mask)
+                pruned_params += (mask == 0).sum().item()
+            
+            active_magnitudes = torch.cat(active_magnitudes)
+            return active_magnitudes, total_params, pruned_params
+        
+        elif self.selection_strategy == 'random':
+            # Generate random scores
+            _, total_params, pruned_params = self._collect_active_scores(fisher_scores, current_mask)
+            total_active = total_params - pruned_params
+            random_scores = torch.rand(total_active)
+            return random_scores, total_params, pruned_params
+        
+        else:
+            raise ValueError(f"Unknown selection strategy: {self.selection_strategy}")
+    
+    def _calculate_flexible_threshold(self, selection_scores: torch.Tensor,
+                                    target_sparsity: float,
+                                    total_params: int,
+                                    pruned_params: int) -> float:
+        """Calculate pruning threshold based on selection strategy."""
+        
+        target_pruned = int(total_params * target_sparsity)
+        additional_prune = target_pruned - pruned_params
+        
+        if additional_prune <= 0:
+            return float('inf')
+        
+        # Sort based on strategy
+        if self.selection_strategy in ['least_sensitive', 'lowest_magnitude', 'random']:
+            # Prune smallest values (ascending sort, take from bottom)
+            sorted_scores = torch.sort(selection_scores, descending=False).values
+            threshold_idx = additional_prune - 1
+        else:  # most_sensitive, highest_magnitude
+            # Prune largest values (descending sort, take from top)
+            sorted_scores = torch.sort(selection_scores, descending=True).values
+            threshold_idx = additional_prune - 1
+        
+        if threshold_idx >= len(sorted_scores):
+            threshold_idx = len(sorted_scores) - 1
+        
+        return sorted_scores[threshold_idx].item()
+    
+    def _apply_strategy_pruning(self, fisher_scores: Dict[str, torch.Tensor],
+                              current_mask: Dict[str, torch.Tensor],
+                              threshold: float) -> Dict[str, torch.Tensor]:
+        """Apply pruning based on the selected strategy."""
+        
+        updated_mask = copy.deepcopy(current_mask)
+        
+        if self.selection_strategy == 'most_sensitive':
+            # Use Fisher scores (descending)
+            for param_name in fisher_scores:
+                param_scores = fisher_scores[param_name]
+                mask_tensor = updated_mask[param_name]
+                active_indices = mask_tensor == 1
+                pruning_indices = param_scores > threshold
+                mask_tensor[pruning_indices & active_indices] = 0
+                
+        elif self.selection_strategy in ['lowest_magnitude', 'highest_magnitude']:
+            # Use parameter magnitudes
+            for param_name in fisher_scores:
+                param_magnitudes = torch.abs(self._get_parameter_values(param_name))
+                mask_tensor = updated_mask[param_name]
+                active_indices = mask_tensor == 1
+                
+                if self.selection_strategy == 'lowest_magnitude':
+                    pruning_indices = param_magnitudes < threshold
+                else:  # highest_magnitude
+                    pruning_indices = param_magnitudes > threshold
+                    
+                mask_tensor[pruning_indices & active_indices] = 0
+                    
+        elif self.selection_strategy == 'random':
+            # Random selection
+            for param_name in fisher_scores:
+                mask_tensor = updated_mask[param_name]
+                active_indices = mask_tensor == 1
+                num_active = active_indices.sum().item()
+                
+                if num_active > 0:
+                    # Generate random scores for active parameters
+                    random_tensor = torch.rand_like(mask_tensor.float())
+                    pruning_indices = random_tensor < threshold
+                    mask_tensor[pruning_indices & active_indices] = 0
+        
+        return updated_mask
+    
+    def _get_parameter_values(self, param_name: str) -> torch.Tensor:
+        """Get current parameter values from stored model reference."""
+        if self._current_model is None:
+            raise RuntimeError("Model reference not available")
+        
+        for name, param in self._current_model.named_parameters():
+            if name == param_name:
+                return param.data
+        
+        raise ValueError(f"Parameter {param_name} not found in model")
     
     def _report_mask_statistics(self, mask: Dict[str, torch.Tensor], iteration: int):
         """Report current mask statistics."""
@@ -450,6 +629,137 @@ def compute_mask(model: torch.nn.Module,
         target_sparsity=sparsity_target,
         num_iterations=R,
         soft_zero_value=soft_zero
+    )
+    
+    return mask_generator.generate_mask(
+        model=model,
+        dataloader=dataloader,
+        device=device,
+        enable_visualization=enable_plot,
+        debug_mode=debug
+    )
+
+
+def compute_mask_most_sensitive(model: torch.nn.Module, 
+                               dataloader: DataLoader,
+                               sparsity_target: float = 0.9,
+                               R: int = 5,
+                               soft_zero: float = 0.01,
+                               num_examples: Optional[int] = None,
+                               device: str = 'cuda',
+                               enable_plot: bool = False,
+                               debug: bool = False) -> Dict[str, torch.Tensor]:
+    """
+    Compute mask by pruning MOST-SENSITIVE parameters (highest Fisher scores).
+    
+    This is the opposite of the default approach - removes the most important parameters.
+    Useful for studying the impact of removing critical weights.
+    """
+    print("🔥 Computing mask with MOST-SENSITIVE parameter selection")
+    
+    mask_generator = IterativeMaskGenerator(
+        target_sparsity=sparsity_target,
+        num_iterations=R,
+        soft_zero_value=soft_zero,
+        selection_strategy='most_sensitive'
+    )
+    
+    return mask_generator.generate_mask(
+        model=model,
+        dataloader=dataloader,
+        device=device,
+        enable_visualization=enable_plot,
+        debug_mode=debug
+    )
+
+
+def compute_mask_lowest_magnitude(model: torch.nn.Module, 
+                                 dataloader: DataLoader,
+                                 sparsity_target: float = 0.9,
+                                 R: int = 5,
+                                 soft_zero: float = 0.01,
+                                 num_examples: Optional[int] = None,
+                                 device: str = 'cuda',
+                                 enable_plot: bool = False,
+                                 debug: bool = False) -> Dict[str, torch.Tensor]:
+    """
+    Compute mask by pruning LOWEST-MAGNITUDE parameters (smallest absolute values).
+    
+    Classic magnitude-based pruning - removes weights closest to zero.
+    """
+    print("📏 Computing mask with LOWEST-MAGNITUDE parameter selection")
+    
+    mask_generator = IterativeMaskGenerator(
+        target_sparsity=sparsity_target,
+        num_iterations=R,
+        soft_zero_value=soft_zero,
+        selection_strategy='lowest_magnitude'
+    )
+    
+    return mask_generator.generate_mask(
+        model=model,
+        dataloader=dataloader,
+        device=device,
+        enable_visualization=enable_plot,
+        debug_mode=debug
+    )
+
+
+def compute_mask_highest_magnitude(model: torch.nn.Module, 
+                                  dataloader: DataLoader,
+                                  sparsity_target: float = 0.9,
+                                  R: int = 5,
+                                  soft_zero: float = 0.01,
+                                  num_examples: Optional[int] = None,
+                                  device: str = 'cuda',
+                                  enable_plot: bool = False,
+                                  debug: bool = False) -> Dict[str, torch.Tensor]:
+    """
+    Compute mask by pruning HIGHEST-MAGNITUDE parameters (largest absolute values).
+    
+    Counter-intuitive approach - removes the largest weights.
+    Useful for studying robustness to removing large parameters.
+    """
+    print("🎯 Computing mask with HIGHEST-MAGNITUDE parameter selection")
+    
+    mask_generator = IterativeMaskGenerator(
+        target_sparsity=sparsity_target,
+        num_iterations=R,
+        soft_zero_value=soft_zero,
+        selection_strategy='highest_magnitude'
+    )
+    
+    return mask_generator.generate_mask(
+        model=model,
+        dataloader=dataloader,
+        device=device,
+        enable_visualization=enable_plot,
+        debug_mode=debug
+    )
+
+
+def compute_mask_random(model: torch.nn.Module, 
+                       dataloader: DataLoader,
+                       sparsity_target: float = 0.9,
+                       R: int = 5,
+                       soft_zero: float = 0.01,
+                       num_examples: Optional[int] = None,
+                       device: str = 'cuda',
+                       enable_plot: bool = False,
+                       debug: bool = False) -> Dict[str, torch.Tensor]:
+    """
+    Compute mask by pruning RANDOM parameters.
+    
+    Baseline approach for comparison - random parameter selection.
+    Helps establish performance floor for structured pruning methods.
+    """
+    print("🎲 Computing mask with RANDOM parameter selection")
+    
+    mask_generator = IterativeMaskGenerator(
+        target_sparsity=sparsity_target,
+        num_iterations=R,
+        soft_zero_value=soft_zero,
+        selection_strategy='random'
     )
     
     return mask_generator.generate_mask(

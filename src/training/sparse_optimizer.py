@@ -140,7 +140,7 @@ class SparseSGDWithMomentum(Optimizer):
                 
                 # Apply parameter mask
                 param_mask = group['mask']
-                grad = grad * param_mask
+                grad = grad * param_mask.to(grad.device)
                 
                 # Update parameter
                 param.data.add_(grad)
