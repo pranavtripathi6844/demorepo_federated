@@ -1,3 +1,8 @@
 masks/*.pth filter=lfs diff=lfs merge=lfs -text
 models/*.pth filter=lfs diff=lfs merge=lfs -text
 checkpoints/*.pth filter=lfs diff=lfs merge=lfs -text
+masks/sparsity_*/*.pth filter=lfs diff=lfs merge=lfs -text
+masks/federated_masks_nc5_R3_sz0.01_stratified.pth filter=lfs diff=lfs merge=lfs -text
+masks/federated_masks_nc10_R3_sz0.01_stratified.pth filter=lfs diff=lfs merge=lfs -text
+masks/federated_masks_nc50_R3_sz0.01_stratified.pth filter=lfs diff=lfs merge=lfs -text
+masks/federated_masks_nc100_R3_sz0.01_stratified.pth filter=lfs diff=lfs merge=lfs -text

@@ -41,4 +41,6 @@ data/cifar-100-python.tar.gz
 # ALLOW ESSENTIAL FILES FOR FEDERATED + TALOS:
 # - All .pth files in checkpoints/, masks/, and models/ are now tracked
 # - All configuration and result files are tracked
-# - Removed *.pth exclusion to allow essential model files
+# - Removed *.pth exclusion to allow essential model files# Exclude large nc=1 masks and wandb runs
+masks/**/federated_masks_nc1_R3_sz0.01_stratified.pth
+wandb/offline-run-*/

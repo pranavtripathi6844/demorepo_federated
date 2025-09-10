@@ -7,6 +7,7 @@ This approach ensures each client gets a representative sample for mask generati
 import torch
 import os
 import time
+import argparse
 from typing import List, Dict
 from torch.utils.data import DataLoader
 
@@ -141,10 +142,10 @@ def compute_mask_clients(model: torch.nn.Module,
     return client_masks
 
 
-def compute_federated_masks_stratified():
+def compute_federated_masks_stratified(sparsity=0.78, output_dir="masks"):
     """Compute federated masks using stratified loaders."""
     print("Computing federated masks with stratified loaders...")
-    print("Configuration: R=3, sparsity=0.78, soft_zero=0.01")
+    print(f"Configuration: R=3, sparsity={sparsity}, soft_zero=0.01")
     print("Using stratified loaders for balanced Fisher Information calculation")
     
     # Load model
@@ -163,7 +164,6 @@ def compute_federated_masks_stratified():
     
     # Configuration
     R = 3
-    sparsity = 0.78
     soft_zero = 0.01
     num_examples = 30
     
@@ -181,7 +181,7 @@ def compute_federated_masks_stratified():
     print(f"Stratified sampling: {num_examples} examples per client")
     
     # Create masks directory
-    os.makedirs("masks", exist_ok=True)
+    os.makedirs(output_dir, exist_ok=True)
     
     total_masks = 0
     
@@ -248,7 +248,7 @@ def compute_federated_masks_stratified():
                 print(f"    ✓ Masks generated successfully with proper sparsity.")
         
         # Save masks for this Nc configuration
-        save_path = f"masks/federated_masks_nc{nc}_R{R}_sz{soft_zero}_stratified.pth"
+        save_path = f"{output_dir}/federated_masks_nc{nc}_R{R}_sz{soft_zero}_stratified.pth"
         torch.save(client_masks, save_path)
         print(f"  ✓ Saved {len(client_masks)} masks to {save_path}")
         
@@ -271,10 +271,20 @@ def compute_federated_masks_stratified():
     
     # List all generated mask files
     print(f"\nGenerated mask files:")
-    mask_files = [f for f in os.listdir("masks") if f.startswith("federated_masks") and "stratified" in f]
+    mask_files = [f for f in os.listdir(output_dir) if f.startswith("federated_masks") and "stratified" in f]
     for mask_file in sorted(mask_files):
-        print(f"  - masks/{mask_file}")
+        print(f"  - {output_dir}/{mask_file}")
 
 
 if __name__ == "__main__":
-    compute_federated_masks_stratified()
+    parser = argparse.ArgumentParser(description='Compute federated masks with stratified sampling')
+    parser.add_argument('--sparsity', type=float, default=0.78, 
+                       help='Target sparsity level (default: 0.78)')
+    parser.add_argument('--output_dir', type=str, default='masks', 
+                       help='Output directory for masks (default: masks)')
+    
+    args = parser.parse_args()
+    compute_federated_masks_stratified(
+        sparsity=args.sparsity, 
+        output_dir=args.output_dir
+    )

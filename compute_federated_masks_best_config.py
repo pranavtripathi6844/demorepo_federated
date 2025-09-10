@@ -40,10 +40,10 @@ def compute_federated_masks_best_config():
     for Nc in Nc_values:
         print(f"\n=== Processing Nc={Nc} ===")
         
-        # Create non-IID splits
+        # Create non-IID splits - FIXED: Pass the dataset, not data_manager
         print(f"Creating non-IID splits: 100 clients, {Nc} classes per client")
         client_datasets = create_non_iid_splits(
-            data_manager, 
+            train_loader.dataset,  # Pass the actual dataset, not data_manager
             num_clients=100, 
             classes_per_client=Nc
         )
@@ -64,7 +64,7 @@ def compute_federated_masks_best_config():
                 num_workers=0
             )
             
-            # Compute mask for this client - FIXED PARAMETERS
+            # Compute mask for this client
             mask = compute_mask(
                 model=model, 
                 dataloader=client_loader, 
@@ -72,7 +72,7 @@ def compute_federated_masks_best_config():
                 R=R, 
                 soft_zero=soft_zero, 
                 num_examples=num_examples,
-                device='cuda',
+                device='mps',  # Use Apple GPU with Metal Performance Shaders
                 enable_plot=False,
                 debug=False
             )
