@@ -32,7 +32,7 @@ from src.training.model_editing import (
 )
 
 # Import existing functionality
-from src.models.linear_flexible_dino import LinearFlexibleDino
+from src.models.vision_transformer import LinearFlexibleDino
 from src.data.dataset_loader import CIFAR100DataManager, create_non_iid_splits
 from compute_federated_masks_stratified import get_n_examples_per_class_loader
 

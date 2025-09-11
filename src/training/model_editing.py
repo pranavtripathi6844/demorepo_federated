@@ -194,11 +194,11 @@ class IterativeMaskGenerator:
         # Update the fisher calculator with the correct device
         self.fisher_calculator = FisherInformationCalculator(device=device)
         
-        # Store model reference for magnitude-based strategies
-        self._current_model = model
+        # Store model reference for magnitude-based strategies - ensure it's on correct device
+        self._current_model = model.to(device)
         
         # Create local copy of model
-        local_model = copy.deepcopy(model)
+        local_model = copy.deepcopy(model.to(device))
         
         # Configure parameter gradients for backbone-only training
         self._configure_parameter_gradients(local_model)
@@ -441,10 +441,25 @@ class IterativeMaskGenerator:
             sorted_scores = torch.sort(selection_scores, descending=True).values
             threshold_idx = additional_prune - 1
         
-        if threshold_idx >= len(sorted_scores):
+        # Check if we have any scores to work with
+        if len(sorted_scores) == 0:
+            # No active parameters available - return infinity to skip pruning
+            return float('inf')
+        
+        # Ensure threshold_idx is valid
+        if threshold_idx < 0:
+            threshold_idx = 0
+        elif threshold_idx >= len(sorted_scores):
             threshold_idx = len(sorted_scores) - 1
         
-        return sorted_scores[threshold_idx].item()
+        threshold_value = sorted_scores[threshold_idx].item()
+        
+        # Optional debug output (commented out for production)
+        # if self.selection_strategy in ['lowest_magnitude', 'highest_magnitude']:
+        #     print(f"DEBUG THRESHOLD: strategy={self.selection_strategy}")
+        #     print(f"DEBUG THRESHOLD: threshold={threshold_value}")
+        
+        return threshold_value
     
     def _apply_strategy_pruning(self, fisher_scores: Dict[str, torch.Tensor],
                               current_mask: Dict[str, torch.Tensor],
@@ -470,9 +485,11 @@ class IterativeMaskGenerator:
                 active_indices = mask_tensor == 1
                 
                 if self.selection_strategy == 'lowest_magnitude':
-                    pruning_indices = param_magnitudes < threshold
+                    # For lowest magnitude: prune parameters <= threshold
+                    pruning_indices = param_magnitudes <= threshold
                 else:  # highest_magnitude
-                    pruning_indices = param_magnitudes > threshold
+                    # For highest magnitude: prune parameters >= threshold
+                    pruning_indices = param_magnitudes >= threshold
                     
                 mask_tensor[pruning_indices & active_indices] = 0
                     
@@ -498,7 +515,9 @@ class IterativeMaskGenerator:
         
         for name, param in self._current_model.named_parameters():
             if name == param_name:
-                return param.data
+                # Ensure device consistency with mask tensors
+                target_device = next(iter(self._current_model.parameters())).device
+                return param.data.to(target_device)
         
         raise ValueError(f"Parameter {param_name} not found in model")
     
