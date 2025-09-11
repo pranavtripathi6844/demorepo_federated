@@ -44,3 +44,22 @@ data/cifar-100-python.tar.gz
 # - Removed *.pth exclusion to allow essential model files# Exclude large nc=1 masks and wandb runs
 masks/**/federated_masks_nc1_R3_sz0.01_stratified.pth
 wandb/offline-run-*/
+
+# Ignore large artifacts
+masks/**
+checkpoints/**/*.pth
+models/**/*.pth
+data/**
+wandb/**
+plots/**/*.png
+*.pth
+*.pt
+*.onnx
+
+# Exclude oversized mask artifacts
+masks/strategy_experiments/sparsity_078/federated_masks_nc5_R3_sz0.01_most_sensitive.pth
+masks/strategy_experiments/sparsity_078/federated_masks_nc5_R3_sz0.01_random.pth
+masks/strategy_experiments/sparsity_078/federated_masks_nc10_R3_sz0.01_most_sensitive.pth
+masks/strategy_experiments/sparsity_078/federated_masks_nc10_R3_sz0.01_random.pth
+masks/strategy_experiments/sparsity_078/federated_masks_nc50_R3_sz0.01_most_sensitive.pth
+masks/strategy_experiments/sparsity_078/federated_masks_nc50_R3_sz0.01_random.pth
